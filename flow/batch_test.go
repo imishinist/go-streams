@@ -15,8 +15,9 @@ func TestBatch(t *testing.T) {
 		in := make(chan any)
 		out := make(chan any)
 
+		name := "batch"
 		source := ext.NewChanSource(in)
-		batch := flow.NewBatch[int]("test", 4, 40*time.Millisecond)
+		batch := flow.NewBatch[int](name, 4, 40*time.Millisecond)
 		sink := ext.NewChanSink(out)
 		assert.NotEqual(t, source, nil)
 
@@ -36,6 +37,19 @@ func TestBatch(t *testing.T) {
 		outputs := readSlice[[]int](sink.Out)
 		expects := [][]int{{1, 2, 3, 4}, {5, 6, 7}, {8}}
 		assert.Equal(t, expects, outputs)
+
+		labels := map[string]string{"name": name, "type": "batch"}
+		gauge, err := flow.ParallelismGauge.GetMetricWith(labels)
+		assert.NoError(t, err)
+		metrics := readMetrics(t, gauge)
+		assert.Len(t, metrics, 1)
+		assert.Equal(t, 0, int(metrics[0].value.Gauge.GetValue()))
+
+		gauge, err = flow.WorkersGauge.GetMetricWith(labels)
+		assert.NoError(t, err)
+		metrics = readMetrics(t, gauge)
+		assert.Len(t, metrics, 1)
+		assert.Equal(t, 0, int(metrics[0].value.Gauge.GetValue()))
 	})
 
 	t.Run("batch with 0 size", func(t *testing.T) {

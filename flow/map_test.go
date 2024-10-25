@@ -14,8 +14,9 @@ func TestMap(t *testing.T) {
 		in := make(chan any, 10)
 		out := make(chan any, 10)
 
+		mapName := "map"
 		source := ext.NewChanSource(in)
-		mapper := flow.NewMap[int, int]("map", func(e int) int { return e * 2 }, 1)
+		mapper := flow.NewMap[int, int](mapName, func(e int) int { return e * 2 }, 1)
 		sink := ext.NewChanSink(out)
 		go func() {
 			source.Via(mapper).To(sink)
@@ -28,5 +29,18 @@ func TestMap(t *testing.T) {
 		outputs := readSlice[int](out)
 		expects := []int{2, 4, 6, 8, 10}
 		assert.Equal(t, expects, outputs)
+
+		labels := map[string]string{"name": mapName, "type": "map"}
+		gauge, err := flow.ParallelismGauge.GetMetricWith(labels)
+		assert.NoError(t, err)
+		metrics := readMetrics(t, gauge)
+		assert.Len(t, metrics, 1)
+		assert.Equal(t, 0, int(metrics[0].value.Gauge.GetValue()))
+
+		gauge, err = flow.WorkersGauge.GetMetricWith(labels)
+		assert.NoError(t, err)
+		metrics = readMetrics(t, gauge)
+		assert.Len(t, metrics, 1)
+		assert.Equal(t, 0, int(metrics[0].value.Gauge.GetValue()))
 	})
 }

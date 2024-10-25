@@ -32,6 +32,8 @@ func NewBatch[T any](name string, maxBatchSize uint, timeInterval time.Duration)
 		out:          make(chan any),
 		reloaded:     make(chan struct{}),
 	}
+	workersGauge.WithLabelValues(name, "batch").Set(0)
+	parallelismGauge.WithLabelValues(name, "batch").Set(float64(1))
 	go batchFlow.batchStream()
 
 	return batchFlow
@@ -55,7 +57,11 @@ func (b *Batch[T]) In() chan<- any {
 }
 
 func (b *Batch[T]) transmit(inlet streams.Input) {
-	defer close(inlet.In())
+	defer func() {
+		close(inlet.In())
+		parallelismGauge.WithLabelValues(b.name, "batch").Set(0)
+	}()
+
 	for batch := range b.out {
 		inlet.In() <- batch
 	}
@@ -66,7 +72,9 @@ func (b *Batch[T]) batchStream() {
 	defer func() {
 		close(b.out)
 		ticker.Stop()
+		workersGauge.WithLabelValues(b.name, "batch").Sub(1)
 	}()
+	workersGauge.WithLabelValues(b.name, "batch").Set(1)
 
 	// If you want to reload the configuration, make the local variables
 	// reflect the values only after receiving the value from the "reloaded" channel.

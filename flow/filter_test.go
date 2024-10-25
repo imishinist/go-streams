@@ -57,6 +57,19 @@ func TestFilter(t *testing.T) {
 
 			outputs := readSlice[int](out)
 			assert.Equal(t, cc.expects, outputs)
+
+			labels := map[string]string{"name": cc.name, "type": "filter"}
+			gauge, err := flow.ParallelismGauge.GetMetricWith(labels)
+			assert.NoError(t, err)
+			metrics := readMetrics(t, gauge)
+			assert.Len(t, metrics, 1)
+			assert.Equal(t, 0, int(metrics[0].value.Gauge.GetValue()))
+
+			gauge, err = flow.WorkersGauge.GetMetricWith(labels)
+			assert.NoError(t, err)
+			metrics = readMetrics(t, gauge)
+			assert.Len(t, metrics, 1)
+			assert.Equal(t, 0, int(metrics[0].value.Gauge.GetValue()))
 		})
 	}
 }

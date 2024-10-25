@@ -35,6 +35,8 @@ func NewFilter[T any](name string, filterPredicate FilterPredicate[T], paralleli
 		parallelism:     parallelism,
 		reloaded:        make(chan struct{}),
 	}
+	workersGauge.WithLabelValues(name, "filter").Set(0)
+	parallelismGauge.WithLabelValues(name, "filter").Set(float64(parallelism))
 	go filter.doStream()
 
 	return filter
@@ -58,10 +60,13 @@ func (f *Filter[T]) In() chan<- any {
 }
 
 func (f *Filter[T]) transmit(inlet streams.Input) {
+	defer func() {
+		close(inlet.In())
+		parallelismGauge.WithLabelValues(f.name, "filter").Set(0)
+	}()
 	for element := range f.Out() {
 		inlet.In() <- element
 	}
-	close(inlet.In())
 }
 
 // doStream discards items that don't match the filter predicate.
@@ -70,6 +75,7 @@ func (f *Filter[T]) doStream() {
 	defer close(f.out)
 	defer close(f.reloaded)
 
+	parallelismGauge.WithLabelValues(f.name, "filter").Set(float64(f.parallelism))
 	go func() {
 		for {
 			select {
@@ -78,6 +84,7 @@ func (f *Filter[T]) doStream() {
 					return
 				}
 				sem.Set(f.parallelism)
+				parallelismGauge.WithLabelValues(f.name, "filter").Set(float64(f.parallelism))
 			}
 		}
 	}()
@@ -86,8 +93,10 @@ func (f *Filter[T]) doStream() {
 	for elem := range f.in {
 		sem.Acquire()
 		wg.Add(1)
+		workersGauge.WithLabelValues(f.name, "filter").Add(1)
 		go func(element T) {
 			defer func() {
+				workersGauge.WithLabelValues(f.name, "filter").Sub(1)
 				wg.Done()
 				sem.Release()
 			}()

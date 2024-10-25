@@ -34,6 +34,8 @@ func NewMap[T, R any](name string, mapFunction MapFunction[T, R], parallelism ui
 		parallelism: parallelism,
 		reloaded:    make(chan struct{}),
 	}
+	workersGauge.WithLabelValues(name, "map").Set(0)
+	parallelismGauge.WithLabelValues(name, "map").Set(float64(parallelism))
 	go mapFlow.doStream()
 
 	return mapFlow
@@ -57,10 +59,13 @@ func (m *Map[T, R]) In() chan<- any {
 }
 
 func (m *Map[T, R]) transmit(inlet streams.Input) {
+	defer func() {
+		close(inlet.In())
+		parallelismGauge.WithLabelValues(m.name, "map").Set(0)
+	}()
 	for element := range m.Out() {
 		inlet.In() <- element
 	}
-	close(inlet.In())
 }
 
 func (m *Map[T, R]) doStream() {
@@ -68,6 +73,7 @@ func (m *Map[T, R]) doStream() {
 	defer close(m.out)
 	defer close(m.reloaded)
 
+	parallelismGauge.WithLabelValues(m.name, "map").Set(float64(m.parallelism))
 	go func() {
 		for {
 			select {
@@ -76,6 +82,7 @@ func (m *Map[T, R]) doStream() {
 					return
 				}
 				sem.Set(m.parallelism)
+				parallelismGauge.WithLabelValues(m.name, "map").Set(float64(m.parallelism))
 			}
 		}
 	}()
@@ -84,8 +91,10 @@ func (m *Map[T, R]) doStream() {
 	for elem := range m.in {
 		sem.Acquire()
 		wg.Add(1)
+		workersGauge.WithLabelValues(m.name, "map").Add(1)
 		go func(element T) {
 			defer func() {
+				workersGauge.WithLabelValues(m.name, "map").Sub(1)
 				wg.Done()
 				sem.Release()
 			}()
