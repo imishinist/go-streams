@@ -2,6 +2,12 @@ package flow_test
 
 import "time"
 
+func ingestSlice[T any](in chan any, sources []T) {
+	for _, e := range sources {
+		in <- e
+	}
+}
+
 func ingestDeferred[T any](in chan any, item T, wait time.Duration) {
 	time.Sleep(wait)
 	in <- item
