@@ -1,10 +1,11 @@
 package flow
 
 import (
+	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/imishinist/go-streams"
-	ssync "github.com/imishinist/go-streams/sync"
 )
 
 type FilterPredicate[T any] func(T) bool
@@ -17,7 +18,10 @@ type Filter[T any] struct {
 	out             chan any
 	parallelism     uint
 
-	reloaded chan struct{}
+	// changed is used to signal that the parallelism has changed.
+	changed chan uint
+	// finished is used to signal that the stream has finished.
+	finished atomic.Bool
 }
 
 var _ streams.Flow = (*Filter[any])(nil)
@@ -33,7 +37,8 @@ func NewFilter[T any](name string, filterPredicate FilterPredicate[T], paralleli
 		in:              make(chan any),
 		out:             make(chan any),
 		parallelism:     parallelism,
-		reloaded:        make(chan struct{}),
+		changed:         make(chan uint),
+		finished:        atomic.Bool{},
 	}
 	workersGauge.WithLabelValues(name, "filter").Set(0)
 	parallelismGauge.WithLabelValues(name, "filter").Set(float64(parallelism))
@@ -71,47 +76,75 @@ func (f *Filter[T]) transmit(inlet streams.Input) {
 
 // doStream discards items that don't match the filter predicate.
 func (f *Filter[T]) doStream() {
-	sem := ssync.NewDynamicSemaphore(f.parallelism)
-	defer close(f.out)
-	defer close(f.reloaded)
+	// channels for terminating workers individually
+	quit := make(chan struct{})
+	defer func() {
+		close(quit)
+		close(f.changed)
+		close(f.out)
+	}()
 
-	parallelismGauge.WithLabelValues(f.name, "filter").Set(float64(f.parallelism))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	wg := new(sync.WaitGroup)
+	parallelism := f.parallelism
+	for i := 0; i < int(parallelism); i++ {
+		wg.Add(1)
+		go f.work(wg, quit)
+	}
+
 	go func() {
-		for {
-			select {
-			case _, ok := <-f.reloaded:
-				if !ok {
-					return
+		// reload configurations sequentially
+		for newParallelism := range f.changed {
+			if newParallelism > parallelism {
+				for i := parallelism; i < newParallelism; i++ {
+					wg.Add(1)
+					go f.work(wg, quit)
 				}
-				sem.Set(f.parallelism)
-				parallelismGauge.WithLabelValues(f.name, "filter").Set(float64(f.parallelism))
+			} else {
+				for i := parallelism; i > newParallelism; i-- {
+					select {
+					case quit <- struct{}{}:
+					case <-ctx.Done():
+						return
+					}
+				}
 			}
+			parallelism = newParallelism
 		}
 	}()
 
-	wg := new(sync.WaitGroup)
-	for elem := range f.in {
-		sem.Acquire()
-		wg.Add(1)
-		workersGauge.WithLabelValues(f.name, "filter").Add(1)
-		go func(element T) {
-			defer func() {
-				workersGauge.WithLabelValues(f.name, "filter").Sub(1)
-				wg.Done()
-				sem.Release()
-			}()
-
-			if f.filterPredicate(element) {
-				f.out <- element
-			}
-		}(elem.(T))
-	}
 	wg.Wait()
+	f.finished.Store(true)
+}
+
+func (f *Filter[T]) work(wg *sync.WaitGroup, quit <-chan struct{}) {
+	defer func() {
+		workersGauge.WithLabelValues(f.name, "filter").Sub(1)
+		wg.Done()
+	}()
+
+	workersGauge.WithLabelValues(f.name, "filter").Add(1)
+	for v := range orDone(quit, f.in) {
+		elem := v.(T)
+		if f.filterPredicate(elem) {
+			f.out <- elem
+		}
+	}
 }
 
 func (f *Filter[T]) SetParallelism(parallelism uint) {
+	if parallelism == 0 {
+		parallelism = 1
+	}
+	if f.finished.Load() || f.parallelism == parallelism {
+		return
+	}
+
 	f.parallelism = parallelism
+	parallelismGauge.WithLabelValues(f.name, "filter").Set(float64(parallelism))
 	go func() {
-		f.reloaded <- struct{}{}
+		f.changed <- parallelism
 	}()
 }

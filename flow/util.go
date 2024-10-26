@@ -14,3 +14,24 @@ func DoStream(out streams.Output, in streams.Input) {
 		}
 	}()
 }
+
+func orDone[T any](done <-chan struct{}, c <-chan T) <-chan T {
+	valStream := make(chan T)
+	go func() {
+		defer close(valStream)
+		for {
+			select {
+			case <-done:
+				return
+			case val, ok := <-c:
+				if !ok {
+					return
+				}
+				// for graceful shutdown, we don't check done channel here
+				// because we want to send all values from the channel
+				valStream <- val
+			}
+		}
+	}()
+	return valStream
+}

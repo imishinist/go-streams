@@ -31,7 +31,7 @@ func TestFilter(t *testing.T) {
 			name: "filter changing order",
 			filter: func(i int) bool {
 				// sleep to reverse order
-				time.Sleep(time.Duration((10-i)*20) * time.Millisecond)
+				time.Sleep(time.Duration((10-i)*50) * time.Millisecond)
 				return i%2 == 0
 			},
 			inputs:      []int{1, 2, 3, 4, 5, 6, 7},
