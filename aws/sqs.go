@@ -24,7 +24,7 @@ type SQSSourceConfig[T any] struct {
 
 	Parallelism uint
 
-	BodyHandler func(*string) *T
+	BodyHandler func(*string) (*T, error)
 }
 
 type SQSSource[T any] struct {
@@ -85,9 +85,14 @@ func (s *SQSSource[T]) receive(ctx context.Context) {
 			}
 
 			for _, message := range result.Messages {
+				var receiptHandle *string
+				body, err := s.config.BodyHandler(message.Body)
+				if err == nil {
+					receiptHandle = message.ReceiptHandle
+				}
 				m := QueueMessage[T]{
-					ReceiptHandle: message.ReceiptHandle,
-					Body:          s.config.BodyHandler(message.Body),
+					ReceiptHandle: receiptHandle,
+					Body:          body,
 				}
 				select {
 				case <-s.reloaded:
