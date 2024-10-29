@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
@@ -14,6 +15,7 @@ import (
 type QueueMessage[T any] struct {
 	ReceiptHandle *string
 	Body          *T
+	ReceiveTime   time.Time
 }
 
 type SQSSourceConfig[T any] struct {
@@ -55,8 +57,8 @@ func (s *SQSSource[T]) receive(ctx context.Context) {
 		close(s.out)
 	}()
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 
 	sem := ssync.NewDynamicSemaphore(s.config.Parallelism)
 	for {
@@ -80,10 +82,11 @@ func (s *SQSSource[T]) receive(ctx context.Context) {
 				WaitTimeSeconds:     int32(s.config.WaitTimeSeconds),
 			})
 			if err != nil {
-				cancel()
+				cancel(err)
 				return
 			}
 
+			receiveTime := time.Now()
 			for _, message := range result.Messages {
 				var receiptHandle *string
 				body, err := s.config.BodyHandler(message.Body)
@@ -93,6 +96,7 @@ func (s *SQSSource[T]) receive(ctx context.Context) {
 				m := QueueMessage[T]{
 					ReceiptHandle: receiptHandle,
 					Body:          body,
+					ReceiveTime:   receiveTime,
 				}
 				select {
 				case <-s.reloaded:
