@@ -6,7 +6,7 @@ replace github.com/imishinist/go-streams => ..
 
 require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.36.2
-	github.com/imishinist/go-streams v0.0.0-00010101000000-000000000000
+	github.com/imishinist/go-streams v0.1.1
 )
 
 require (
