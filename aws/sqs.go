@@ -13,9 +13,12 @@ import (
 )
 
 type QueueMessage[T any] struct {
+	MessageID     *string
 	ReceiptHandle *string
-	Body          *T
-	ReceiveTime   time.Time
+	Attributes    map[string]string
+
+	ReceiveTime time.Time
+	Body        *T
 }
 
 type SQSSourceConfig[T any] struct {
@@ -93,10 +96,13 @@ func (s *SQSSource[T]) receive(ctx context.Context) {
 				if err == nil {
 					receiptHandle = message.ReceiptHandle
 				}
+
 				m := QueueMessage[T]{
+					MessageID:     message.MessageId,
 					ReceiptHandle: receiptHandle,
-					Body:          body,
+					Attributes:    message.Attributes,
 					ReceiveTime:   receiveTime,
+					Body:          body,
 				}
 				select {
 				case <-s.reloaded:
